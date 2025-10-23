@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: sentinel-router
+
+resources:
+  - ../../deployment.yaml
+  - ../../config.yaml
+  - ../../security.yaml
+  - ../../monitoring.yaml
+  - ../../rollout.yaml
+  - ../../istio.yaml
+  - ../../external-secrets.yaml
+
+commonLabels:
+  app.kubernetes.io/name: sentinel-router
+  app.kubernetes.io/managed-by: kustomize
+
+images:
+  - name: sentinelrouter/sentinel-api
+    newTag: latest

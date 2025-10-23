@@ -1,0 +1,352 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sentinel-api
+  namespace: sentinel-router
+  labels:
+    app: sentinel-api
+    version: v1.0.0
+spec:
+  # Min 3 for HA, scales to 20 via HPA (70% CPU, 80% memory, 100ms p99)
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: sentinel-api
+  template:
+    metadata:
+      labels:
+        app: sentinel-api
+        version: v1.0.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: sentinel-api
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      
+      # SPIFFE/SPIRE integration
+      initContainers:
+      - name: spire-agent
+        image: ghcr.io/spiffe/spire-agent:1.8.0
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -e
+          echo "Starting SPIRE agent with retry logic..."
+          for i in 1 2 3; do
+            if /opt/spire/bin/spire-agent run -config /opt/spire/conf/agent/agent.conf & 
+            sleep 5
+            if [ -S /run/spire/sockets/agent.sock ]; then
+              echo "SPIRE socket ready"
+              exit 0
+            fi
+            fi
+            echo "Retry $i/3 failed, waiting..."
+            sleep $((2 ** (i - 1)))
+          done
+          exit 1
+        volumeMounts:
+        - name: spire-agent-socket
+          mountPath: /run/spire/sockets
+        - name: spire-config
+          mountPath: /opt/spire/conf/agent
+      - name: model-cacher
+        image: busybox:1.36
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          echo "Caching ML models to tmpfs for fast access..."
+          cp /app/models/mev_detection_model.onnx /dev/shm/models/
+          echo "Model cached successfully"
+        volumeMounts:
+        - name: models
+          mountPath: /app/models
+        - name: tmpfs-models
+          mountPath: /dev/shm/models
+      
+      containers:
+      - name: api
+        image: sentinelrouter/sentinel-api:1.0.0
+        imagePullPolicy: IfNotPresent
+        
+        ports:
+        - name: grpc
+          containerPort: 50051
+          protocol: TCP
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        
+        env:
+        - name: RUST_LOG
+          value: "info"
+        - name: MODEL_PATH
+          value: "/dev/shm/models/mev_detection_model.onnx"  # Cached in tmpfs for 10ms faster load
+        - name: API_PORT
+          value: "8080"
+        - name: GRPC_PORT
+          value: "50051"
+        - name: METRICS_PORT
+          value: "9090"
+        - name: HELIUS_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sentinel-secrets
+              key: helius_api_key
+        - name: HELIUS_RPC_URL
+          valueFrom:
+            configMapKeyRef:
+              name: sentinel-config
+              key: helius_rpc_url
+        - name: HELIUS_LASERSTREAM_URL
+          valueFrom:
+            configMapKeyRef:
+              name: sentinel-config
+              key: helius_laserstream_url
+        - name: JITO_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: sentinel-config
+              key: jito_endpoint
+        - name: DATA_DIR
+          value: "/data/transactions"
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://otel-collector:4317"
+        - name: SPIFFE_ENDPOINT_SOCKET
+          value: "unix:///run/spire/sockets/agent.sock"
+        
+        # Vault integration for secrets
+        - name: VAULT_ADDR
+          value: "http://vault:8200"
+        - name: VAULT_ROLE
+          value: "sentinel-api"
+        
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        
+        volumeMounts:
+        - name: models
+          mountPath: /app/models
+          readOnly: true
+        - name: tmpfs-models
+          mountPath: /dev/shm/models
+        - name: data
+          mountPath: /data
+        - name: spire-agent-socket
+          mountPath: /run/spire/sockets
+          readOnly: true
+        - name: tls-certs
+          mountPath: /app/certs
+          readOnly: true
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+        
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      
+      volumes:
+      - name: models
+        configMap:
+          name: ml-models
+      - name: tmpfs-models
+        emptyDir:
+          medium: Memory
+          sizeLimit: 500Mi
+      - name: data
+        persistentVolumeClaim:
+          claimName: sentinel-data
+      - name: spire-agent-socket
+        hostPath:
+          path: /run/spire/sockets
+          type: Directory
+      - name: spire-config
+        configMap:
+          name: spire-agent-config
+      - name: tls-certs
+        secret:
+          secretName: sentinel-tls-certs
+      
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - sentinel-api
+              topologyKey: kubernetes.io/hostname
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sentinel-api-grpc
+  namespace: sentinel-router
+  labels:
+    app: sentinel-api
+spec:
+  type: ClusterIP
+  ports:
+  - name: grpc
+    port: 50051
+    targetPort: 50051
+    protocol: TCP
+  selector:
+    app: sentinel-api
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sentinel-api-http
+  namespace: sentinel-router
+  labels:
+    app: sentinel-api
+spec:
+  type: LoadBalancer
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+  selector:
+    app: sentinel-api
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sentinel-api-metrics
+  namespace: sentinel-router
+  labels:
+    app: sentinel-api
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+spec:
+  type: ClusterIP
+  ports:
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  selector:
+    app: sentinel-api
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sentinel-api
+  namespace: sentinel-router
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: sentinel-api-hpa
+  namespace: sentinel-router
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: sentinel-api
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: sentinel_processing_latency_p99
+      target:
+        type: AverageValue
+        averageValue: "100"
+  - type: Pods
+    pods:
+      metric:
+        name: sentinel_inference_total
+      target:
+        type: AverageValue
+        averageValue: "500"  # Scale at 500 req/s per pod
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sentinel-data
+  namespace: sentinel-router
+spec:
+  accessModes:
+  - ReadWriteMany
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 500Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sentinel-config
+  namespace: sentinel-router
+data:
+  jito_endpoint: "https://mainnet.block-engine.jito.wtf"
+  high_risk_threshold: "0.7"
+  baseline_percentile: "75"
+  batch_size: "1000"
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: sentinel-api-pdb
+  namespace: sentinel-router
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: sentinel-api

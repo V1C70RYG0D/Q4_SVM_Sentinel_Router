@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sentinel-api
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+      - name: api
+        env:
+        - name: RUST_LOG
+          value: "debug"
+        - name: HELIUS_RPC_URL
+          value: "https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}"
+        - name: SOLANA_RPC_URL
+          value: "https://api.devnet.solana.com"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"

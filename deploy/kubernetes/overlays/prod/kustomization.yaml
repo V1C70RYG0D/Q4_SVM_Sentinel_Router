@@ -1,0 +1,37 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: sentinel-router
+
+namePrefix: prod-
+
+commonLabels:
+  environment: production
+  app.kubernetes.io/part-of: sentinel-router
+  app.kubernetes.io/version: v1.0.0
+
+bases:
+  - ../../base
+
+patchesStrategicMerge:
+  - deployment-patch.yaml
+  - hpa-patch.yaml
+
+images:
+  - name: sentinelrouter/sentinel-api
+    newTag: v1.0.0
+
+replicas:
+  - name: sentinel-api
+    count: 3
+
+configMapGenerator:
+  - name: sentinel-config
+    behavior: merge
+    literals:
+      - feature_validator_intelligence=true
+      - feature_jito_bundles=true
+      - feature_durable_nonces=true
+      - ai_latency_target_ms=50
+      - otel_service_name=sentinel-router-production
+      - prometheus_enabled=true

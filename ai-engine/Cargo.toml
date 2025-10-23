@@ -1,0 +1,55 @@
+[package]
+name = "ai-engine"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[features]
+default = []
+onnx = []  # Enable ONNX runtime optimizations (placeholder for future use)
+
+[dependencies]
+sentinel-core = { path = "../core" }
+
+# AI/ML
+ort.workspace = true
+
+# Solana
+solana-sdk.workspace = true
+solana-client.workspace = true
+solana-system-interface.workspace = true
+
+# HTTP client for Pyth
+reqwest.workspace = true
+
+# Async
+tokio.workspace = true
+
+# Observability
+tracing.workspace = true
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# UUID for request tracking
+uuid = { version = "1.6", features = ["v4"] }
+
+# Math
+ndarray = "0.15"
+statrs = "0.16"
+
+# Time
+chrono.workspace = true
+
+# Benchmarking
+criterion.workspace = true
+
+[[bench]]
+name = "ai_benchmarks"
+harness = false

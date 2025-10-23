@@ -1,0 +1,21 @@
+[
+  "priority_fee_sol",
+  "total_fee_sol",
+  "fee_ratio",
+  "compute_per_instruction",
+  "fee_per_compute",
+  "num_instructions",
+  "num_accounts",
+  "account_per_instruction",
+  "max_balance_change_sol",
+  "total_balance_change_sol",
+  "hour",
+  "day_of_week",
+  "dex_Jupiter V6",
+  "dex_Orca Whirlpool",
+  "dex_Raydium AMM",
+  "dex_Raydium CLMM",
+  "high_priority_flag",
+  "high_compute_flag",
+  "complex_tx_flag"
+]

@@ -1,0 +1,189 @@
+# Default values for Sentinel Router Helm chart
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 3
+
+image:
+  repository: sentinelrouter/sentinel-api
+  pullPolicy: IfNotPresent
+  tag: "1.0.0"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9090"
+  prometheus.io/path: "/metrics"
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+    - ALL
+
+service:
+  type: ClusterIP
+  grpcPort: 50051
+  httpPort: 80
+  metricsPort: 9090
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: api.sentinel-router.io
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: sentinel-tls-cert
+      hosts:
+        - api.sentinel-router.io
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 4Gi
+  requests:
+    cpu: 1000m
+    memory: 2Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  customMetrics:
+    - type: Pods
+      pods:
+        metric:
+          name: sentinel_processing_latency_p99
+        target:
+          type: AverageValue
+          averageValue: "100"
+    - type: Pods
+      pods:
+        metric:
+          name: sentinel_inference_total
+        target:
+          type: AverageValue
+          averageValue: "500"
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app
+            operator: In
+            values:
+            - sentinel-api
+        topologyKey: kubernetes.io/hostname
+
+# Application configuration
+config:
+  helius:
+    rpcUrl: "https://mainnet.helius-rpc.com"
+    laserstreamUrl: "https://atlas-mainnet.helius-rpc.com"
+  jito:
+    endpoint: "https://mainnet.block-engine.jito.wtf"
+    tipFloorUrl: "https://bundles.jito.wtf/api/v1/bundles/tip_floor"
+  solana:
+    rpcUrl: "https://api.mainnet-beta.solana.com"
+  api:
+    host: "0.0.0.0"
+    port: 8080
+    grpcPort: 50051
+    metricsPort: 9090
+  model:
+    path: "/dev/shm/models/mev_detection_model.onnx"
+    inferenceThreads: 4
+    latencyTargetMs: 50
+  observability:
+    otelEndpoint: "http://otel-collector:4317"
+    otelServiceName: "sentinel-router"
+    prometheusEnabled: true
+  features:
+    validatorIntelligence: true
+    jitoBundles: true
+    durableNonces: true
+
+# Secrets (provide via --set-file or external secrets)
+secrets:
+  heliusApiKey: ""
+  heliusLaserstreamXToken: ""
+  jitoAuthKeypair: ""
+
+# Persistent storage
+persistence:
+  enabled: true
+  storageClass: "fast-ssd"
+  size: 500Gi
+  accessMode: ReadWriteMany
+
+# Monitoring
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    scrapeTimeout: 10s
+
+# SPIFFE/SPIRE integration
+spire:
+  enabled: true
+  agentImage: ghcr.io/spiffe/spire-agent:1.8.0
+  serverAddress: spire-server
+  serverPort: 8081
+  trustDomain: sentinel-router.io
+
+# Istio integration
+istio:
+  enabled: true
+  virtualService:
+    enabled: true
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+  destinationRule:
+    enabled: true
+    trafficPolicy:
+      connectionPool:
+        tcp:
+          maxConnections: 1000
+        http:
+          http1MaxPendingRequests: 1000
+          http2MaxRequests: 1000
+
+# External Secrets Operator
+externalSecrets:
+  enabled: true
+  backend: vault
+  vaultAddress: "http://vault.vault.svc.cluster.local:8200"
+  vaultPath: "secret"
+  refreshInterval: 1h

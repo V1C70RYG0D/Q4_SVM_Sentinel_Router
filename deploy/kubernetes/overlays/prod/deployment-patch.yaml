@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sentinel-api
+spec:
+  replicas: 3
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: api
+        env:
+        - name: RUST_LOG
+          value: "info,sentinel_router=debug"
+        - name: HELIUS_RPC_URL
+          value: "https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}"
+        - name: SOLANA_RPC_URL
+          value: "https://api.mainnet-beta.solana.com"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"

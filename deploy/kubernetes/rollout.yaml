@@ -1,0 +1,209 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: sentinel-api
+  namespace: default
+spec:
+  replicas: 3
+  strategy:
+    canary:
+      # Canary traffic split progression
+      steps:
+      - setWeight: 1
+      - pause: {duration: 5m}
+      - setWeight: 5
+      - pause: {duration: 10m}
+      - analysis:
+          templates:
+          - templateName: sentinel-slo-check
+      - setWeight: 25
+      - pause: {duration: 15m}
+      - setWeight: 50
+      - pause: {duration: 15m}
+      - setWeight: 100
+      
+      # Traffic routing via service mesh (Istio/Linkerd) or NGINX
+      trafficRouting:
+        nginx:
+          stableIngress: sentinel-api
+      
+      # Automatic rollback configuration
+      maxSurge: 1
+      maxUnavailable: 0
+      
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: sentinel-api
+  template:
+    metadata:
+      labels:
+        app: sentinel-api
+        version: stable
+    spec:
+      serviceAccountName: sentinel-api
+      containers:
+      - name: sentinel-api
+        image: sentinel-router:latest
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        env:
+        - name: RUST_LOG
+          value: "info"
+        - name: MODEL_PATH
+          value: "/models/mev_detection_model.onnx"
+        - name: SHADOW_MODE
+          valueFrom:
+            configMapKeyRef:
+              name: sentinel-config
+              key: shadow_mode
+              optional: true
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://otel-collector:4317"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: models
+          mountPath: /models
+          readOnly: true
+        - name: data
+          mountPath: /data
+          readOnly: true
+      volumes:
+      - name: models
+        persistentVolumeClaim:
+          claimName: sentinel-models
+      - name: data
+        persistentVolumeClaim:
+          claimName: sentinel-data
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: sentinel-slo-check
+  namespace: default
+spec:
+  metrics:
+  # SLO 1: MEV Detection Rate > 99%
+  - name: mev-detection-rate
+    interval: 1m
+    count: 5
+    successCondition: result >= 0.99
+    failureLimit: 2
+    provider:
+      prometheus:
+        address: http://prometheus:9090
+        query: |
+          sum(rate(sentinel_mev_detected_total[5m])) / 
+          sum(rate(sentinel_transactions_total[5m]))
+  
+  # SLO 2: False Positive Rate < 0.1%
+  - name: false-positive-rate
+    interval: 1m
+    count: 5
+    successCondition: result < 0.001
+    failureLimit: 2
+    provider:
+      prometheus:
+        address: http://prometheus:9090
+        query: |
+          sum(rate(sentinel_false_positives_total[5m])) / 
+          sum(rate(sentinel_predictions_total[5m]))
+  
+  # SLO 3: p99 Inference Latency < 50ms
+  - name: inference-latency-p99
+    interval: 1m
+    count: 5
+    successCondition: result < 0.05
+    failureLimit: 2
+    provider:
+      prometheus:
+        address: http://prometheus:9090
+        query: |
+          histogram_quantile(0.99, 
+            sum(rate(sentinel_inference_duration_seconds_bucket[5m])) by (le)
+          )
+  
+  # SLO 4: Error Rate < 1%
+  - name: error-rate
+    interval: 1m
+    count: 5
+    successCondition: result < 0.01
+    failureLimit: 2
+    provider:
+      prometheus:
+        address: http://prometheus:9090
+        query: |
+          sum(rate(sentinel_errors_total[5m])) / 
+          sum(rate(sentinel_requests_total[5m]))
+  
+  # SLO 5: Model Drift (PSI) < 0.25
+  - name: model-drift-psi
+    interval: 5m
+    count: 3
+    successCondition: result < 0.25
+    failureLimit: 1
+    provider:
+      prometheus:
+        address: http://prometheus:9090
+        query: |
+          sentinel_model_drift_psi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sentinel-api
+  namespace: default
+spec:
+  selector:
+    app: sentinel-api
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sentinel-api-canary
+  namespace: default
+spec:
+  selector:
+    app: sentinel-api
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+  type: ClusterIP

@@ -1,0 +1,49 @@
+[package]
+name = "sentinel-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+# Solana
+solana-sdk.workspace = true
+solana-client.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Time
+chrono.workspace = true
+
+# Crypto
+bs58 = "0.5.1"
+sha2 = "0.10"
+hex = "0.4"
+
+# HTTP client for DEX integration
+reqwest = { version = "0.11", features = ["json"] }
+tokio = { workspace = true }
+bincode.workspace = true
+tracing.workspace = true
+
+# SPL Token
+spl-token = "4.0"
+
+# Cryptographic hashing
+blake3.workspace = true
+
+# UUID for tracking
+uuid.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "intent_bench"
+harness = false

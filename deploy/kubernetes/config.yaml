@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sentinel-config
+  namespace: sentinel-router
+data:
+  # Helius API Configuration (set HELIUS_API_KEY via Secret)
+  helius_rpc_url: "https://mainnet.helius-rpc.com"
+  helius_laserstream_url: "https://atlas-mainnet.helius-rpc.com"
+  
+  # Jito Configuration (no auth keypair required for basic access)
+  jito_endpoint: "https://mainnet.block-engine.jito.wtf"
+  jito_tip_floor_url: "https://bundles.jito.wtf/api/v1/bundles/tip_floor"
+  
+  # Solana RPC
+  solana_rpc_url: "https://api.mainnet-beta.solana.com"
+  
+  # API Configuration
+  api_host: "0.0.0.0"
+  api_port: "8080"
+  grpc_port: "50051"
+  metrics_port: "9090"
+  
+  # Model Configuration
+  model_path: "/app/models/mev_detection_model.onnx"
+  ai_inference_threads: "4"
+  ai_latency_target_ms: "50"
+  
+  # Observability
+  otel_endpoint: "http://otel-collector:4317"
+  otel_service_name: "sentinel-router"
+  prometheus_enabled: "true"
+  
+  # Feature Flags
+  feature_validator_intelligence: "true"
+  feature_jito_bundles: "true"
+  feature_durable_nonces: "true"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sentinel-secrets
+  namespace: sentinel-router
+type: Opaque
+stringData:
+  # Helius API Key
+  helius_api_key: "${HELIUS_API_KEY}"
+  helius_laserstream_x_token: "${HELIUS_API_KEY}"
+  
+  # Note: Jito auth keypair not required for basic operations
+  # If needed later, add as: jito_auth_keypair: "<keypair_json>"
+  
+  # Database credentials (if needed)
+  # postgres_password: ""
+  
+  # Cloud storage credentials (if needed)  
+  # aws_access_key_id: ""
+  # aws_secret_access_key: ""

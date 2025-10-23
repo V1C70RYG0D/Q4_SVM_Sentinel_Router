@@ -1,0 +1,359 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'sentinel-production'
+        environment: 'production'
+    
+    # Alertmanager configuration
+    alerting:
+      alertmanagers:
+      - static_configs:
+        - targets:
+          - alertmanager:9093
+    
+    # Load rules
+    rule_files:
+    - '/etc/prometheus/rules/*.yml'
+    
+    # Scrape configurations
+    scrape_configs:
+    # Sentinel API metrics
+    - job_name: 'sentinel-api'
+      kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+          - sentinel-router
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: true
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        target_label: __address__
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: replace
+        target_label: app
+      - source_labels: [__meta_kubernetes_pod_label_version]
+        action: replace
+        target_label: version
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: monitoring
+data:
+  sentinel-alerts.yml: |
+    groups:
+    - name: sentinel_router_alerts
+      interval: 30s
+      rules:
+      
+      # High latency alert
+      - alert: HighP99Latency
+        expr: histogram_quantile(0.99, rate(sentinel_processing_latency_seconds_bucket[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "High p99 latency detected"
+          description: "p99 latency is {{ $value }}s (threshold: 100ms)"
+      
+      # Critical latency alert
+      - alert: CriticalP99Latency
+        expr: histogram_quantile(0.99, rate(sentinel_processing_latency_seconds_bucket[5m])) > 0.2
+        for: 2m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "Critical p99 latency detected"
+          description: "p99 latency is {{ $value }}s (threshold: 200ms)"
+      
+      # High error rate
+      - alert: HighErrorRate
+        expr: rate(sentinel_transaction_outcomes_total{status="failed"}[5m]) / rate(sentinel_transaction_outcomes_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "High transaction failure rate"
+          description: "Failure rate is {{ $value | humanizePercentage }}"
+      
+      # MiCA STOR Compliance - Log transaction failures for 5-year audit trail
+      - alert: StorableEvent
+        expr: rate(sentinel_transaction_outcomes_total{status="failed"}[5m]) > 0.01
+        for: 1m
+        labels:
+          severity: critical
+          component: compliance
+          compliance: stor
+        annotations:
+          summary: "Transaction failure logged for STOR"
+          description: "Failure rate: {{ $value | humanizePercentage }}. Event stored for 5-year audit trail per MiCA regulations."
+      
+      # AI model drift detected
+      - alert: ModelDriftDetected
+        expr: sentinel_model_drift_psi > 0.25
+        for: 10m
+        labels:
+          severity: warning
+          component: ml
+        annotations:
+          summary: "Model drift detected"
+          description: "PSI is {{ $value }}, retraining recommended"
+      
+      # Service down
+      - alert: ServiceDown
+        expr: up{job="sentinel-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "Sentinel API is down"
+          description: "Pod {{ $labels.pod }} is not responding"
+      
+      # High memory usage
+      - alert: HighMemoryUsage
+        expr: container_memory_usage_bytes{pod=~"sentinel-api-.*"} / container_spec_memory_limit_bytes{pod=~"sentinel-api-.*"} > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value | humanizePercentage }} on pod {{ $labels.pod }}"
+      
+      # Low success rate
+      - alert: LowSuccessRate
+        expr: rate(sentinel_transaction_outcomes_total{status="success"}[10m]) / rate(sentinel_transaction_outcomes_total[10m]) < 0.95
+        for: 10m
+        labels:
+          severity: critical
+          component: routing
+        annotations:
+          summary: "Low transaction success rate"
+          description: "Success rate is {{ $value | humanizePercentage }}"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  sentinel-overview.json: |
+    {
+      "dashboard": {
+        "title": "Sentinel Router - Overview",
+        "tags": ["sentinel", "mev", "solana"],
+        "timezone": "browser",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Request Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(sentinel_intents_total[5m])",
+                "legendFormat": "Requests/sec"
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "title": "P99 Latency",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.99, rate(sentinel_processing_latency_seconds_bucket[5m]))",
+                "legendFormat": "p99"
+              },
+              {
+                "expr": "histogram_quantile(0.95, rate(sentinel_processing_latency_seconds_bucket[5m]))",
+                "legendFormat": "p95"
+              },
+              {
+                "expr": "histogram_quantile(0.50, rate(sentinel_processing_latency_seconds_bucket[5m]))",
+                "legendFormat": "p50"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "title": "MEV Risk Score Distribution",
+            "type": "heatmap",
+            "targets": [
+              {
+                "expr": "rate(sentinel_mev_risk_score_bucket[5m])",
+                "format": "heatmap"
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "title": "Route Selection",
+            "type": "piechart",
+            "targets": [
+              {
+                "expr": "sentinel_route_decisions_total",
+                "legendFormat": "{{route}}"
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "title": "Transaction Outcomes",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(sentinel_transaction_outcomes_total{status=\"success\"}[5m])",
+                "legendFormat": "Success"
+              },
+              {
+                "expr": "rate(sentinel_transaction_outcomes_total{status=\"failed\"}[5m])",
+                "legendFormat": "Failed"
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "title": "AI Inference Latency",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.99, rate(sentinel_ai_inference_latency_seconds_bucket[5m])) * 1000",
+                "legendFormat": "p99 (ms)"
+              }
+            ]
+          }
+        ]
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      serviceAccountName: prometheus
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v2.45.0
+        args:
+        - '--config.file=/etc/prometheus/prometheus.yml'
+        - '--storage.tsdb.path=/prometheus'
+        - '--storage.tsdb.retention.time=30d'
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - name: config
+          mountPath: /etc/prometheus
+        - name: rules
+          mountPath: /etc/prometheus/rules
+        - name: storage
+          mountPath: /prometheus
+      volumes:
+      - name: config
+        configMap:
+          name: prometheus-config
+      - name: rules
+        configMap:
+          name: prometheus-rules
+      - name: storage
+        persistentVolumeClaim:
+          claimName: prometheus-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  type: ClusterIP
+  ports:
+  - port: 9090
+    targetPort: 9090
+  selector:
+    app: prometheus
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:10.0.0
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-secrets
+              key: admin-password
+        volumeMounts:
+        - name: dashboards
+          mountPath: /etc/grafana/provisioning/dashboards
+        - name: storage
+          mountPath: /var/lib/grafana
+      volumes:
+      - name: dashboards
+        configMap:
+          name: grafana-dashboards
+      - name: storage
+        persistentVolumeClaim:
+          claimName: grafana-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 3000
+  selector:
+    app: grafana

@@ -1,0 +1,67 @@
+{
+  "model_version": "1.0.0-hybrid",
+  "training_date": "2025-10-18 00:41:40",
+  "data_sources": {
+    "real_transactions": 74,
+    "synthetic_transactions": 2000,
+    "total": 2074
+  },
+  "features": [
+    "fee",
+    "priority_fee",
+    "tip_lamports",
+    "fee_per_compute",
+    "compute_units",
+    "compute_per_instruction",
+    "num_instructions",
+    "num_accounts",
+    "instructions_per_account",
+    "sandwich_score",
+    "arbitrage_score",
+    "is_jito_bundle",
+    "is_atomic",
+    "has_mev_keywords",
+    "has_priority_fee",
+    "high_priority_fee",
+    "hour",
+    "day_of_week",
+    "num_logs",
+    "logs_per_instruction",
+    "hour_sin",
+    "hour_cos",
+    "day_sin",
+    "day_cos"
+  ],
+  "feature_count": 24,
+  "metrics": {
+    "test_accuracy": 1.0,
+    "test_precision_mev": 1.0,
+    "test_recall_mev": 1.0,
+    "test_f1_mev": 1.0,
+    "roc_auc": 1.0,
+    "cv_roc_auc_mean": 1.0,
+    "cv_roc_auc_std": 3.510833468576701e-17,
+    "train_time_seconds": 0.43715405464172363,
+    "inference_p50_ms": 0.15997886657714844,
+    "inference_p95_ms": 0.19316673278808588,
+    "inference_p99_ms": 0.2451038360595703
+  },
+  "model_params": {
+    "objective": "binary:logistic",
+    "eval_metric": [
+      "auc",
+      "logloss"
+    ],
+    "max_depth": 8,
+    "learning_rate": 0.05,
+    "n_estimators": 500,
+    "min_child_weight": 3,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_alpha": 0.1,
+    "reg_lambda": 1.0,
+    "tree_method": "hist",
+    "random_state": 42,
+    "n_jobs": -1
+  }
+}

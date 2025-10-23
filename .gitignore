@@ -1,0 +1,29 @@
+
+# Build artifacts
+target/
+Cargo.lock
+
+# Documentation files (exclude all except root README.md)
+*.md
+!README.md
+**/*.md
+!README.md
+*.sh
+*.txt
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db

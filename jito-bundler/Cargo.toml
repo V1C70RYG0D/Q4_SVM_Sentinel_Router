@@ -1,0 +1,32 @@
+[package]
+name = "jito-bundler"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+sentinel-core = { path = "../core" }
+
+# Solana
+solana-sdk.workspace = true
+solana-system-interface.workspace = true
+
+# Async
+tokio.workspace = true
+
+# Observability
+tracing.workspace = true
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+base64 = "0.22"
+bincode.workspace = true
+
+# HTTP client
+reqwest.workspace = true
